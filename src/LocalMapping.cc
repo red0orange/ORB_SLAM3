@@ -61,7 +61,7 @@ void LocalMapping::SetTracker(Tracking *pTracker)
     mpTracker=pTracker;
 }
 
-void LocalMapping::Run()
+void LocalMapping::Run()  // @note Local mapping主函数
 {
     mbFinished = false;
 
@@ -80,6 +80,10 @@ void LocalMapping::Run()
             std::chrono::steady_clock::time_point time_StartProcessKF = std::chrono::steady_clock::now();
 #endif
             // BoW conversion and insertion in Map
+            // 1. 计算Bow
+            // 2. 更新新KeyFrame涉及到的Map points中的信息，如map point最优描述子
+            // 3. 更新共视图
+            // 4. 添加该帧到Altas地图中
             ProcessNewKeyFrame();
 #ifdef REGISTER_TIMES
             std::chrono::steady_clock::time_point time_EndProcessKF = std::chrono::steady_clock::now();
@@ -89,6 +93,8 @@ void LocalMapping::Run()
 #endif
 
             // Check recent MapPoints
+            // 根据规则判断无效、低效Map point并进行移除：
+            // 规则 1. 
             MapPointCulling();
 #ifdef REGISTER_TIMES
             std::chrono::steady_clock::time_point time_EndMPCulling = std::chrono::steady_clock::now();
@@ -98,6 +104,8 @@ void LocalMapping::Run()
 #endif
 
             // Triangulate new MapPoints
+            // @note 添加Map points
+            // 对角化计算，添加新的Map points
             CreateNewMapPoints();
 
             mbAbortBA = false;
@@ -151,6 +159,7 @@ void LocalMapping::Run()
                     }
                     else
                     {
+                        // @note Local BA，结合过往关键帧对当前关键帧和Mappoints进行BA优化
                         Optimizer::LocalBundleAdjustment(mpCurrentKeyFrame,&mbAbortBA, mpCurrentKeyFrame->GetMap(),num_FixedKF_BA,num_OptKF_BA,num_MPs_BA,num_edges_BA);
                         b_doneLBA = true;
                     }
@@ -188,6 +197,7 @@ void LocalMapping::Run()
 
 
                 // Check redundant local Keyframes
+                // @note 删除多余的关键帧
                 KeyFrameCulling();
 
 #ifdef REGISTER_TIMES
@@ -197,7 +207,7 @@ void LocalMapping::Run()
                 vdKFCulling_ms.push_back(timeKFCulling_ms);
 #endif
 
-                if ((mTinit<50.0f) && mbInertial)
+                if ((mTinit<50.0f) && mbInertial)  // IMU的，不用管
                 {
                     if(mpCurrentKeyFrame->GetMap()->isImuInitialized() && mpTracker->mState==Tracking::OK) // Enter here everytime local-mapping is called
                     {
@@ -247,6 +257,7 @@ void LocalMapping::Run()
             vdKFCullingSync_ms.push_back(timeKFCulling_ms);
 #endif
 
+            // @note 添加关键帧到Loop Closer内
             mpLoopCloser->InsertKeyFrame(mpCurrentKeyFrame);
 
 #ifdef REGISTER_TIMES
@@ -330,6 +341,7 @@ void LocalMapping::ProcessNewKeyFrame()
         }
     }
 
+    // @note 更新共视图
     // Update links in the Covisibility Graph
     mpCurrentKeyFrame->UpdateConnections();
 

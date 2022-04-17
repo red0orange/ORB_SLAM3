@@ -87,7 +87,7 @@ void LoopClosing::SetLocalMapper(LocalMapping *pLocalMapper)
 }
 
 
-void LoopClosing::Run()
+void LoopClosing::Run()  // @note Loop closer主函数
 {
     mbFinished =false;
 
@@ -353,6 +353,8 @@ bool LoopClosing::NewDetectCommonRegions()
         return false;
     }
 
+    // 如果当前关键帧的地图（其实也就是Active Map吧？）中关键帧数量小于12，则不进行Place Recognition
+    // 为什么呢？好像也合理，如果是Active Map内部的Loop closure，太小没有意义。如果是multi map间的子地图合并，才刚跟踪回来几帧，确实也不太可能出现回到旧的地方的情况，不过这个可能性还是有的，如果遇到这种相关的离奇的情况，需要记得这个地方。@note warnings
     if(mpLastMap->GetAllKeyFrames().size() < 12)
     {
         // cout << "LoopClousure: Stereo KF inserted without check, map is small: " << mpCurrentKF->mnId << endl;
