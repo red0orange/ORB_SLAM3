@@ -1635,7 +1635,9 @@ void LoopClosing::MergeLocal()  // 无IMU情况下的子图合并
     }
 
     // ***************** 第六步，前面完成Welding Window的迁移后，构建新的Essential Graph *****************
+    // 在Active Map中，Welding window外的关键帧、MapPoint目前都还没有迁移过来
     //Rebuild the essential graph in the local window
+    // 下面在拓展树中父子颠倒的操作是什么意思？
     pCurrentMap->GetOriginKF()->SetFirstConnection(false);
     pNewChild = mpCurrentKF->GetParent(); // Old parent, it will be the new child of this KF
     pNewParent = mpCurrentKF; // Old child, now it will be the parent of its own parent(we need eliminate this KF from children list in its old parent)
@@ -1836,7 +1838,7 @@ void LoopClosing::MergeLocal()  // 无IMU情况下的子图合并
     vdMergeOptEss_ms.push_back(timeOptEss);
 #endif
 
-
+    // 重启Local Map线程
     mpLocalMapper->Release();
 
     if(bRelaunchBA && (!pCurrentMap->isImuInitialized() || (pCurrentMap->KeyFramesInMap()<200 && mpAtlas->CountMaps()==1)))
