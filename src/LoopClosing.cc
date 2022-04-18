@@ -121,7 +121,7 @@ void LoopClosing::Run()  // @note Loop closer主函数
             if(bFindedRegion)
             {
                 // ***************** 第二步：进行子地图合并、Loop closure *****************
-                // ***************** 如果Map Merge成功，进行Map Merge *****************
+                // ***************** 如果Map Merge的Place Recognition成功，进行Map Merge *****************
                 if(mbMergeDetected)
                 {
                     if ((mpTracker->mSensor==System::IMU_MONOCULAR || mpTracker->mSensor==System::IMU_STEREO || mpTracker->mSensor==System::IMU_RGBD) &&
@@ -224,7 +224,7 @@ void LoopClosing::Run()  // @note Loop closer主函数
 
                 }
 
-                // ***************** 如果Loop closure成功 *****************
+                // ***************** 如果Loop closure的Place Recognition成功，进行Loop closure *****************
                 if(mbLoopDetected)
                 {
                     bool bGoodLoop = true;
@@ -1262,6 +1262,7 @@ void LoopClosing::MergeLocal()  // 无IMU情况下的子图合并
 {
     int numTemporalKFs = 25; //Temporal KFs in the local window if the map is inertial.
 
+    // 在第一步优化Welding Windows关键帧时和第二步优化其余关键帧时都会使用
     //Relationship to rebuild the essential graph, it is used two times, first in the local window and later in the rest of the map
     KeyFrame* pNewChild;
     KeyFrame* pNewParent;
@@ -1272,8 +1273,9 @@ void LoopClosing::MergeLocal()  // 无IMU情况下的子图合并
     // Flag that is true only when we stopped a running BA, in this case we need relaunch at the end of the merge
     bool bRelaunchBA = false;
 
-    //Verbose::PrintMess("MERGE-VISUAL: Check Full Bundle Adjustment", Verbose::VERBOSITY_DEBUG);
-    // If a Global Bundle Adjustment is running, abort it
+    // Verbose::PrintMess("MERGE-VISUAL: Check Full Bundle Adjustment", Verbose::VERBOSITY_DEBUG);
+    //  If a Global Bundle Adjustment is running, abort it
+    // ***************** 准备工作：如果Loop Closure进行的Global BA(GBA)线程还没结束，中断它并设置标志，在合并结束后重新进行GBA *****************
     if(isRunningGBA())
     {
         unique_lock<mutex> lock(mMutexGBA);
@@ -1291,18 +1293,20 @@ void LoopClosing::MergeLocal()  // 无IMU情况下的子图合并
 
     //Verbose::PrintMess("MERGE-VISUAL: Request Stop Local Mapping", Verbose::VERBOSITY_DEBUG);
     //cout << "Request Stop Local Mapping" << endl;
+    // ***************** 准备工作：因为需要处理Map，暂停Local Mapping线程，Local Mapping线程将会在处理完正在执行的那次循环后暂停 *****************
     mpLocalMapper->RequestStop();
     // Wait until Local Mapping has effectively stopped
-    while(!mpLocalMapper->isStopped())
+    while(!mpLocalMapper->isStopped())  // 等待Local Mapping线程处理完正在执行的那次循环
     {
         usleep(1000);
     }
     //cout << "Local Map stopped" << endl;
 
-    mpLocalMapper->EmptyQueue();
+    mpLocalMapper->EmptyQueue();  // 将队列中的关键帧全部添加到局部地图中，但不进行Local Mapping操作
 
     // Merge map will become in the new active map with the local window of KFs and MPs from the current map.
     // Later, the elements of the current map will be transform to the new active map reference, in order to keep real time tracking
+    // ***************** 第一步：取出两个子地图，准备合并 *****************
     Map* pCurrentMap = mpCurrentKF->GetMap();
     Map* pMergeMap = mpMergeMatchedKF->GetMap();
 
@@ -1316,10 +1320,15 @@ void LoopClosing::MergeLocal()  // 无IMU情况下的子图合并
     // Ensure current keyframe is updated
     mpCurrentKF->UpdateConnections();
 
-    //Get the current KF and its neighbors(visual->covisibles; inertial->temporal+covisibles)
+    // ***************** 第二步：构建Welding Windows，包括其中的关键帧以及Map Point *****************
+    // ***************** Active Map中的两个关键变量 *****************
+    // Get the current KF and its neighbors(visual->covisibles; inertial->temporal+covisibles)
+    // spLocalWindowKFs：保存Welding Windows中Active Map部分的所有关键帧
     set<KeyFrame*> spLocalWindowKFs;
-    //Get MPs in the welding area from the current map
+    // Get MPs in the welding area from the current map
+    // spLocalWindowMPs：保存Welding Windows中Active Map部分相关的所有地图点
     set<MapPoint*> spLocalWindowMPs;
+
     if(pCurrentMap->IsInertial() && pMergeMap->IsInertial()) //TODO Check the correct initialization
     {
         KeyFrame* pKFi = mpCurrentKF;
@@ -1350,11 +1359,13 @@ void LoopClosing::MergeLocal()  // 无IMU情况下的子图合并
         spLocalWindowKFs.insert(mpCurrentKF);
     }
 
+    // 关键帧，包含当前关键帧以及最共视的numTemporalKFs个关键帧
     vector<KeyFrame*> vpCovisibleKFs = mpCurrentKF->GetBestCovisibilityKeyFrames(numTemporalKFs);
     spLocalWindowKFs.insert(vpCovisibleKFs.begin(), vpCovisibleKFs.end());
-    spLocalWindowKFs.insert(mpCurrentKF);
+    spLocalWindowKFs.insert(mpCurrentKF);  // 虽然是set，但也没必要重复添加吧……
     const int nMaxTries = 5;
     int nNumTries = 0;
+    // 如果数量不够numTemporalKFs，则从共视关键帧中寻找迭代最佳共视关键帧，知道数量达到
     while(spLocalWindowKFs.size() < numTemporalKFs && nNumTries < nMaxTries)
     {
         vector<KeyFrame*> vpNewCovKFs;
@@ -1375,7 +1386,7 @@ void LoopClosing::MergeLocal()  // 无IMU情况下的子图合并
         spLocalWindowKFs.insert(vpNewCovKFs.begin(), vpNewCovKFs.end());
         nNumTries++;
     }
-
+    // 添加所有看到的Map point
     for(KeyFrame* pKFi : spLocalWindowKFs)
     {
         if(!pKFi || pKFi->isBad())
@@ -1387,7 +1398,10 @@ void LoopClosing::MergeLocal()  // 无IMU情况下的子图合并
 
     //std::cout << "[Merge]: Ma = " << to_string(pCurrentMap->GetId()) << "; #KFs = " << to_string(spLocalWindowKFs.size()) << "; #MPs = " << to_string(spLocalWindowMPs.size()) << std::endl;
 
+    // ***************** 两个关键变量，对应上面的Active Map的两个变量，此处是Stored Map的，结构完全一致 *****************
     set<KeyFrame*> spMergeConnectedKFs;
+    set<MapPoint *> spMapPointMerge;
+
     if(pCurrentMap->IsInertial() && pMergeMap->IsInertial()) //TODO Check the correct initialization
     {
         KeyFrame* pKFi = mpMergeMatchedKF;
@@ -1434,7 +1448,6 @@ void LoopClosing::MergeLocal()  // 无IMU情况下的子图合并
         nNumTries++;
     }
 
-    set<MapPoint*> spMapPointMerge;
     for(KeyFrame* pKFi : spMergeConnectedKFs)
     {
         set<MapPoint*> vpMPs = pKFi->GetMapPoints();
@@ -1447,13 +1460,15 @@ void LoopClosing::MergeLocal()  // 无IMU情况下的子图合并
 
     //std::cout << "[Merge]: Mm = " << to_string(pMergeMap->GetId()) << "; #KFs = " << to_string(spMergeConnectedKFs.size()) << "; #MPs = " << to_string(spMapPointMerge.size()) << std::endl;
 
-
-    //
+    // ***************** 第三步，计算Active Map中所有关键帧到Merge Map的Sim3变换 *****************
+    // 取出Place Recognition中得到的两个关键帧之间的Sim3相似变化
     Sophus::SE3d Twc = mpCurrentKF->GetPoseInverse().cast<double>();
     g2o::Sim3 g2oNonCorrectedSwc(Twc.unit_quaternion(),Twc.translation(),1.0);
     g2o::Sim3 g2oNonCorrectedScw = g2oNonCorrectedSwc.inverse();
     g2o::Sim3 g2oCorrectedScw = mg2oMergeScw; //TODO Check the transformation
 
+    // vCorrectedSim3：保存所有 当前关键帧+其共视关键帧 转到合并地图的Sim3变换
+    // vNonCorrectedSim3：保存所有 当前关键帧+其共视关键帧 自己地图内的Sim3变换（只是将原先有的SE3转为Sim3而已）
     KeyFrameAndPose vCorrectedSim3, vNonCorrectedSim3;
     vCorrectedSim3[mpCurrentKF]=g2oCorrectedScw;
     vNonCorrectedSim3[mpCurrentKF]=g2oNonCorrectedScw;
@@ -1463,7 +1478,7 @@ void LoopClosing::MergeLocal()  // 无IMU情况下的子图合并
     vnMergeKFs.push_back(spLocalWindowKFs.size() + spMergeConnectedKFs.size());
     vnMergeMPs.push_back(spLocalWindowMPs.size() + spMapPointMerge.size());
 #endif
-    for(KeyFrame* pKFi : spLocalWindowKFs)
+    for (KeyFrame *pKFi : spLocalWindowKFs) // 遍历spLocalWindowKFs
     {
         if(!pKFi || pKFi->isBad())
         {
@@ -1471,11 +1486,12 @@ void LoopClosing::MergeLocal()  // 无IMU情况下的子图合并
             continue;
         }
 
-        if(pKFi->GetMap() != pCurrentMap)
+        if(pKFi->GetMap() != pCurrentMap)  // 这种情况也可能发生吗？？
             Verbose::PrintMess("Other map KF, this should't happen", Verbose::VERBOSITY_DEBUG);
 
         g2o::Sim3 g2oCorrectedSiw;
 
+        // 根据两个关键帧已知的Sim3变换，计算其他共视关键帧的Sim3变换（SE3 + Sim3）
         if(pKFi!=mpCurrentKF)
         {
             Sophus::SE3d Tiw = (pKFi->GetPose()).cast<double>();
@@ -1483,8 +1499,8 @@ void LoopClosing::MergeLocal()  // 无IMU情况下的子图合并
             //Pose without correction
             vNonCorrectedSim3[pKFi]=g2oSiw;
 
-            Sophus::SE3d Tic = Tiw*Twc;
-            g2o::Sim3 g2oSic(Tic.unit_quaternion(),Tic.translation(),1.0);
+            Sophus::SE3d Tic = Tiw*Twc;  // 计算
+            g2o::Sim3 g2oSic(Tic.unit_quaternion(),Tic.translation(),1.0);  // SE3转换为Sim3
             g2oCorrectedSiw = g2oSic*mg2oMergeScw;
             vCorrectedSim3[pKFi]=g2oCorrectedSiw;
         }
@@ -1496,9 +1512,10 @@ void LoopClosing::MergeLocal()  // 无IMU情况下的子图合并
 
         // Update keyframe pose with corrected Sim3. First transform Sim3 to SE3 (scale translation)
         double s = g2oCorrectedSiw.scale();
+        // pKFi->mfScale保存关键帧变换的尺度
         pKFi->mfScale = s;
         Sophus::SE3d correctedTiw(g2oCorrectedSiw.rotation(), g2oCorrectedSiw.translation() / s);
-
+        // pKFi->mTcwMerge保存关键帧变换的SE3
         pKFi->mTcwMerge = correctedTiw.cast<float>();
 
         if(pCurrentMap->isImuInitialized())
@@ -1510,6 +1527,7 @@ void LoopClosing::MergeLocal()  // 无IMU情况下的子图合并
         //TODO DEBUG to know which are the KFs that had been moved to the other map
     }
 
+    // ***************** 第四步，计算Active Map中所有地图点在Merge Map中的坐标值 *****************
     int numPointsWithCorrection = 0;
 
     //for(MapPoint* pMPi : spLocalWindowMPs)
@@ -1517,6 +1535,7 @@ void LoopClosing::MergeLocal()  // 无IMU情况下的子图合并
     while(itMP != spLocalWindowMPs.end())
     {
         MapPoint* pMPi = *itMP;
+        // 删除坏点
         if(!pMPi || pMPi->isBad())
         {
             itMP = spLocalWindowMPs.erase(itMP);
@@ -1538,6 +1557,7 @@ void LoopClosing::MergeLocal()  // 无IMU情况下的子图合并
         Eigen::Vector3d eigCorrectedP3Dw = g2oCorrectedSwi.map(g2oNonCorrectedSiw.map(P3Dw));
         Eigen::Quaterniond Rcor = g2oCorrectedSwi.rotation() * g2oNonCorrectedSiw.rotation();
 
+        // 结果保存至Map Point内部的成员变量
         pMPi->mPosMerge = eigCorrectedP3Dw.cast<float>();
         pMPi->mNormalVectorMerge = Rcor.cast<float>() * pMPi->GetNormal();
 
@@ -1549,12 +1569,16 @@ void LoopClosing::MergeLocal()  // 无IMU情况下的子图合并
         std::cout << "[Merge]: Ma has " << std::to_string(spLocalWindowMPs.size()) << " points" << std::endl;
     }*/
 
+    // ***************** 第五步，迁移关键帧和Map Point，根据Active Map中关键帧和Map Point计算好的Merge Map坐标系下的Pose、坐标，进行迁移 *****************
     {
+        // 这里不加锁也没事吧，Map线程已经Stop了
         unique_lock<mutex> currentLock(pCurrentMap->mMutexMapUpdate); // We update the current map with the Merge information
         unique_lock<mutex> mergeLock(pMergeMap->mMutexMapUpdate); // We remove the Kfs and MPs in the merged area from the old map
 
         //std::cout << "Merge local window: " << spLocalWindowKFs.size() << std::endl;
         //std::cout << "[Merge]: init merging maps " << std::endl;
+
+        // 更新Active Map中所有的关键帧
         for(KeyFrame* pKFi : spLocalWindowKFs)
         {
             if(!pKFi || pKFi->isBad())
@@ -1565,11 +1589,13 @@ void LoopClosing::MergeLocal()  // 无IMU情况下的子图合并
 
             //std::cout << "KF id: " << pKFi->mnId << std::endl;
 
-            pKFi->mTcwBefMerge = pKFi->GetPose();
-            pKFi->mTwcBefMerge = pKFi->GetPoseInverse();
+            pKFi->mTcwBefMerge = pKFi->GetPose();  // mTcw Before Merge
+            pKFi->mTwcBefMerge = pKFi->GetPoseInverse();  // mTwc Before Merge
+            // 将关键帧的Pose更新为Merge Map坐标系下的Pose
             pKFi->SetPose(pKFi->mTcwMerge);
 
             // Make sure connections are updated
+            // 将关键帧添加到Merge Map中，并从Active Map中删去
             pKFi->UpdateMap(pMergeMap);
             pKFi->mnMergeCorrectedForKF = mpCurrentKF->mnId;
             pMergeMap->AddKeyFrame(pKFi);
@@ -1581,18 +1607,24 @@ void LoopClosing::MergeLocal()  // 无IMU情况下的子图合并
             }
         }
 
+        // 更新Active Map中所有的Map Point
+        // 注意，到此MapPoint都不用管重复的问题，都是直接Sim3变换得到结果
         for(MapPoint* pMPi : spLocalWindowMPs)
         {
             if(!pMPi || pMPi->isBad())
                 continue;
 
+            // 将MapPoint的坐标更新为Merge Map坐标系下的坐标
             pMPi->SetWorldPos(pMPi->mPosMerge);
             pMPi->SetNormalVector(pMPi->mNormalVectorMerge);
+            // 将MapPoint添加到Merge Map中，并从Active Map中删去
             pMPi->UpdateMap(pMergeMap);
             pMergeMap->AddMapPoint(pMPi);
             pCurrentMap->EraseMapPoint(pMPi);
         }
 
+        // 改变Active Map为合并后的Map
+        // 旧的Map不会删除，但是会设置为Bad
         mpAtlas->ChangeMap(pMergeMap);
         mpAtlas->SetMapBad(pCurrentMap);
         pMergeMap->IncreaseChangeIndex();
@@ -1602,6 +1634,7 @@ void LoopClosing::MergeLocal()  // 无IMU情况下的子图合并
         //std::cout << "[Merge]: merging maps finished" << std::endl;
     }
 
+    // ***************** 第六步，前面完成Welding Window的迁移后，构建新的Essential Graph *****************
     //Rebuild the essential graph in the local window
     pCurrentMap->GetOriginKF()->SetFirstConnection(false);
     pNewChild = mpCurrentKF->GetParent(); // Old parent, it will be the new child of this KF
