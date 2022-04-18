@@ -186,7 +186,10 @@ protected:
     //-------
     Map* mpLastMap;
 
+    // ***************** Loop closure关键变量 *****************
+    // mbLoopDetected：记录最终Place Recognition的结果，即是否检测到闭环或Map merge
     bool mbLoopDetected;
+    // mnLoopNumCoincidences：记录Place Recognition的情况，能够代表目前闭环的进程
     int mnLoopNumCoincidences;
     int mnLoopNumNotFound;
     KeyFrame* mpLoopLastCurrentKF;
@@ -195,6 +198,8 @@ protected:
     KeyFrame* mpLoopMatchedKF;
     std::vector<MapPoint*> mvpLoopMPs;
     std::vector<MapPoint*> mvpLoopMatchedMPs;
+
+    // ***************** Map merge关键变量，和上面Loop closure保持一致 *****************
     bool mbMergeDetected;
     int mnMergeNumCoincidences;
     int mnMergeNumNotFound;

@@ -109,6 +109,7 @@ void LoopClosing::Run()  // @note Loop closer主函数
             std::chrono::steady_clock::time_point time_StartPR = std::chrono::steady_clock::now();
 #endif
 
+            // ***************** 第一步，Place Recognition检测，检测成功与否都记录在Loop closure的成员变量中 *****************
             bool bFindedRegion = NewDetectCommonRegions();
 
 #ifdef REGISTER_TIMES
@@ -119,26 +120,27 @@ void LoopClosing::Run()  // @note Loop closer主函数
 #endif
             if(bFindedRegion)
             {
+                // ***************** 第二步：进行子地图合并、Loop closure *****************
+                // ***************** 如果Map Merge成功，进行Map Merge *****************
                 if(mbMergeDetected)
                 {
                     if ((mpTracker->mSensor==System::IMU_MONOCULAR || mpTracker->mSensor==System::IMU_STEREO || mpTracker->mSensor==System::IMU_RGBD) &&
-                        (!mpCurrentKF->GetMap()->isImuInitialized()))
+                        (!mpCurrentKF->GetMap()->isImuInitialized()))  // IMU的，这部分if不用管
                     {
                         cout << "IMU is not initilized, merge is aborted" << endl;
                     }
                     else
                     {
-                        Sophus::SE3d mTmw = mpMergeMatchedKF->GetPose().cast<double>();
+                        Sophus::SE3d mTmw = mpMergeMatchedKF->GetPose().cast<double>();  // 从Place Recognition成功的结果中取出匹配的关键帧
                         g2o::Sim3 gSmw2(mTmw.unit_quaternion(), mTmw.translation(), 1.0);
-                        Sophus::SE3d mTcw = mpCurrentKF->GetPose().cast<double>();
+                        Sophus::SE3d mTcw = mpCurrentKF->GetPose().cast<double>();  // 取出当前关键帧
                         g2o::Sim3 gScw1(mTcw.unit_quaternion(), mTcw.translation(), 1.0);
                         g2o::Sim3 gSw2c = mg2oMergeSlw.inverse();
                         g2o::Sim3 gSw1m = mg2oMergeSlw;
 
                         mSold_new = (gSw2c * gScw1);
 
-
-                        if(mpCurrentKF->GetMap()->IsInertial() && mpMergeMatchedKF->GetMap()->IsInertial())
+                        if (mpCurrentKF->GetMap()->IsInertial() && mpMergeMatchedKF->GetMap()->IsInertial()) // IMU的，这部分if不用管
                         {
                             cout << "Merge check transformation with IMU" << endl;
                             if(mSold_new.scale()<0.90||mSold_new.scale()>1.1){
@@ -180,6 +182,7 @@ void LoopClosing::Run()  // @note Loop closer主函数
                         if (mpTracker->mSensor==System::IMU_MONOCULAR ||mpTracker->mSensor==System::IMU_STEREO || mpTracker->mSensor==System::IMU_RGBD)
                             MergeLocal2();
                         else
+                            // ***************** 子地图合并函数 *****************
                             MergeLocal();
 
 #ifdef REGISTER_TIMES
@@ -188,7 +191,7 @@ void LoopClosing::Run()  // @note Loop closer主函数
                         double timeMergeTotal = std::chrono::duration_cast<std::chrono::duration<double,std::milli> >(time_EndMerge - time_StartMerge).count();
                         vdMergeTotal_ms.push_back(timeMergeTotal);
 #endif
-
+                        // ***************** 子地图合并完成 *****************
                         Verbose::PrintMess("Merge finished!", Verbose::VERBOSITY_QUIET);
                     }
 
@@ -196,6 +199,7 @@ void LoopClosing::Run()  // @note Loop closer主函数
                     vdPR_MatchedTime.push_back(mpMergeMatchedKF->mTimeStamp);
                     vnPR_TypeRecogn.push_back(1);
 
+                    // ***************** 子地图合并完成后，重置变量 *****************
                     // Reset all variables
                     mpMergeLastCurrentKF->SetErase();
                     mpMergeMatchedKF->SetErase();
@@ -207,6 +211,7 @@ void LoopClosing::Run()  // @note Loop closer主函数
 
                     if(mbLoopDetected)
                     {
+                        // ***************** 如果同时存在Map Merge和Loop Closure，仅进行Map Merge，不进行Loop Closure，我觉得是因为地图已发生了改变，按理说这种情况基本不会发生 *****************
                         // Reset Loop variables
                         mpLoopLastCurrentKF->SetErase();
                         mpLoopMatchedKF->SetErase();
@@ -219,6 +224,7 @@ void LoopClosing::Run()  // @note Loop closer主函数
 
                 }
 
+                // ***************** 如果Loop closure成功 *****************
                 if(mbLoopDetected)
                 {
                     bool bGoodLoop = true;
@@ -229,7 +235,7 @@ void LoopClosing::Run()  // @note Loop closer主函数
                     Verbose::PrintMess("*Loop detected", Verbose::VERBOSITY_QUIET);
 
                     mg2oLoopScw = mg2oLoopSlw; //*mvg2oSim3LoopTcw[nCurrentIndex];
-                    if(mpCurrentKF->GetMap()->IsInertial())
+                    if(mpCurrentKF->GetMap()->IsInertial())  // IMU的，这部分if不用管
                     {
                         Sophus::SE3d Twc = mpCurrentKF->GetPoseInverse().cast<double>();
                         g2o::Sim3 g2oTwc(Twc.unit_quaternion(),Twc.translation(),1.0);
@@ -271,6 +277,7 @@ void LoopClosing::Run()  // @note Loop closer主函数
                         nLoop += 1;
 
 #endif
+                        // ***************** Loop Closure函数 *****************
                         CorrectLoop();
 #ifdef REGISTER_TIMES
                         std::chrono::steady_clock::time_point time_EndLoop = std::chrono::steady_clock::now();
@@ -282,6 +289,7 @@ void LoopClosing::Run()  // @note Loop closer主函数
                         mnNumCorrection += 1;
                     }
 
+                    // ***************** Loop Closure完成，重置变量 *****************
                     // Reset all variables
                     mpLoopLastCurrentKF->SetErase();
                     mpLoopMatchedKF->SetErase();
@@ -373,6 +381,7 @@ bool LoopClosing::NewDetectCommonRegions()
 #ifdef REGISTER_TIMES
     std::chrono::steady_clock::time_point time_StartEstSim3_1 = std::chrono::steady_clock::now();
 #endif
+    // ***************** 第三步（Loop Closure），当上一个关键帧有匹配Place Recognition成功的迹象，这一帧进行确认检查 *****************
     if(mnLoopNumCoincidences > 0)
     {
         bCheckSpatial = true;
@@ -382,20 +391,19 @@ bool LoopClosing::NewDetectCommonRegions()
         g2o::Sim3 gScw = gScl * mg2oLoopSlw;
         int numProjMatches = 0;
         vector<MapPoint*> vpMatchedMPs;
+        // mpLoopMatchedKF是第二步中从候选关键帧选择的最佳匹配关键帧，这里直接用新一个关键帧与其进行匹配，用于进一步地保证Place Recognition的Precision
         bool bCommonRegion = DetectAndReffineSim3FromLastKF(mpCurrentKF, mpLoopMatchedKF, gScw, numProjMatches, mvpLoopMPs, vpMatchedMPs);
         if(bCommonRegion)
         {
 
             bLoopDetectedInKF = true;
-
-            mnLoopNumCoincidences++;
+            mnLoopNumCoincidences++;  // 若新一关键帧也匹配成功，则计数+1
             mpLoopLastCurrentKF->SetErase();
             mpLoopLastCurrentKF = mpCurrentKF;
             mg2oLoopSlw = gScw;
             mvpLoopMatchedMPs = vpMatchedMPs;
 
-
-            mbLoopDetected = mnLoopNumCoincidences >= 3;
+            mbLoopDetected = mnLoopNumCoincidences >= 3; // 只要mnLoopNumCoincidences大于3，直接判定Place Recognition成功
             mnLoopNumNotFound = 0;
 
             if(!mbLoopDetected)
@@ -408,8 +416,10 @@ bool LoopClosing::NewDetectCommonRegions()
             bLoopDetectedInKF = false;
 
             mnLoopNumNotFound++;
+            // ***************** 若第一次成功后，再连续两个关键帧丢失（失败）两次，则重置整次Place Recognition进程 *****************
             if(mnLoopNumNotFound >= 2)
             {
+                // ***************** 可以在这里看到Place Recognition关键的变量 *****************
                 mpLoopLastCurrentKF->SetErase();
                 mpLoopMatchedKF->SetErase();
                 mnLoopNumCoincidences = 0;
@@ -421,7 +431,8 @@ bool LoopClosing::NewDetectCommonRegions()
         }
     }
 
-    //Merge candidates
+    // ***************** 第四步（Map Merge），和上面Loop Closure完全对称，当上一个关键帧有匹配Place Recognition成功的迹象，这一帧进行确认检查 *****************
+    // Merge candidates
     bool bMergeDetectedInKF = false;
     if(mnMergeNumCoincidences > 0)
     {
@@ -470,6 +481,7 @@ bool LoopClosing::NewDetectCommonRegions()
         double timeEstSim3 = std::chrono::duration_cast<std::chrono::duration<double,std::milli> >(time_EndEstSim3_1 - time_StartEstSim3_1).count();
 #endif
 
+    // ***************** 第五步，若Loop closure或是Map Merge的Place Recognition检测成功，返回true *****************
     if(mbMergeDetected || mbLoopDetected)
     {
 #ifdef REGISTER_TIMES
@@ -490,6 +502,8 @@ bool LoopClosing::NewDetectCommonRegions()
 #ifdef REGISTER_TIMES
         std::chrono::steady_clock::time_point time_StartQuery = std::chrono::steady_clock::now();
 #endif
+        // ***************** 第一步，从BoW中检测出候选帧，默认选择3个最好的候选帧 *****************
+        // 3个Active Map内的最优候选帧，3个Multi Map内的最优候选帧
         mpKeyFrameDB->DetectNBestCandidates(mpCurrentKF, vpLoopBowCand, vpMergeBowCand,3);
 #ifdef REGISTER_TIMES
         std::chrono::steady_clock::time_point time_EndQuery = std::chrono::steady_clock::now();
@@ -503,6 +517,7 @@ bool LoopClosing::NewDetectCommonRegions()
         std::chrono::steady_clock::time_point time_StartEstSim3_2 = std::chrono::steady_clock::now();
 #endif
     // Check the BoW candidates if the geometric candidate list is empty
+    // ***************** 第二步，BoW得到候选之后，从候选中尝试选择最终的结果 *****************
     //Loop candidates
     if(!bLoopDetectedInKF && !vpLoopBowCand.empty())
     {
@@ -586,6 +601,7 @@ bool LoopClosing::DetectCommonRegionsFromBoW(std::vector<KeyFrame*> &vpBowCand, 
     int nProjMatches = 50;
     int nProjOptMatches = 80;
 
+    // spConnectedKeyFrames代表当前关键帧所有有共视的关键帧
     set<KeyFrame*> spConnectedKeyFrames = mpCurrentKF->GetConnectedKeyFrames();
 
     int nNumCovisibles = 10;
@@ -595,7 +611,9 @@ bool LoopClosing::DetectCommonRegionsFromBoW(std::vector<KeyFrame*> &vpBowCand, 
 
     // Varibles to select the best numbe
     KeyFrame* pBestMatchedKF;
+    // ***************** nBestMatchesReproj：遍历候选关键帧时，记录最终匹配最好的候选关键帧所匹配的Map Points数量，遍历结束后即可直接用它作为判定依据，判定是否达到了我们希望达到的数量，达到了则成功进行了一次Place Recognition *****************
     int nBestMatchesReproj = 0;
+    // ***************** nBestNumCoindicendes：遍历候选关键帧时，记录最终匹配最好的候选关键帧 与 当前关键帧共视的10个关键帧中有多少个匹配成功了，例如3个匹配成功了，则3/10，遍历结束后即可直接用它作为判定依据，判定是否达到了我们希望达到的数量，达到了则成功进行了一次Place Recognition *****************
     int nBestNumCoindicendes = 0;
     g2o::Sim3 g2oBestScw;
     std::vector<MapPoint*> vpBestMapPoints;
@@ -606,14 +624,18 @@ bool LoopClosing::DetectCommonRegionsFromBoW(std::vector<KeyFrame*> &vpBowCand, 
     vector<int> vnMatchesStage(numCandidates, 0);
 
     int index = 0;
-    //Verbose::PrintMess("BoW candidates: There are " + to_string(vpBowCand.size()) + " possible candidates ", Verbose::VERBOSITY_DEBUG);
-    for(KeyFrame* pKFi : vpBowCand)
+    // Verbose::PrintMess("BoW candidates: There are " + to_string(vpBowCand.size()) + " possible candidates ", Verbose::VERBOSITY_DEBUG);
+    // ***************** 遍历每个候选关键帧 开始 *****************
+    // ***************** 在下列的循环中，操作对象都是 当前关键帧 + 当前遍历到的第i个候选关键帧 *****************
+    for (KeyFrame *pKFi : vpBowCand)
     {
         if(!pKFi || pKFi->isBad())
             continue;
 
         // std::cout << "KF candidate: " << pKFi->mnId << std::endl;
         // Current KF against KF with covisibles version
+        // @note 建立Local window
+        // 取nNumCovisibles个最近的共视帧
         std::vector<KeyFrame*> vpCovKFi = pKFi->GetBestCovisibilityKeyFrames(nNumCovisibles);
         if(vpCovKFi.empty())
         {
@@ -622,6 +644,7 @@ bool LoopClosing::DetectCommonRegionsFromBoW(std::vector<KeyFrame*> &vpBowCand, 
         }
         else
         {
+            // 将Matched KF也放入列表内
             vpCovKFi.push_back(vpCovKFi[0]);
             vpCovKFi[0] = pKFi;
         }
@@ -630,6 +653,8 @@ bool LoopClosing::DetectCommonRegionsFromBoW(std::vector<KeyFrame*> &vpBowCand, 
         bool bAbortByNearKF = false;
         for(int j=0; j<vpCovKFi.size(); ++j)
         {
+            // 这样find == end代表没有找到，而不是指向最后一个元素
+            // 如果有找到，说明找到的 候选关键帧+其最近的10个关键帧 存在与当前关键帧比较近的，不满足Loop closure或者Map merge的需求
             if(spConnectedKeyFrames.find(vpCovKFi[j]) != spConnectedKeyFrames.end())
             {
                 bAbortByNearKF = true;
@@ -649,9 +674,11 @@ bool LoopClosing::DetectCommonRegionsFromBoW(std::vector<KeyFrame*> &vpBowCand, 
         std::set<MapPoint*> spMatchedMPi;
         int numBoWMatches = 0;
 
+        // ***************** pMostBoWMatchesKF就是当前遍历的 候选关键帧 *****************
         KeyFrame* pMostBoWMatchesKF = pKFi;
         int nMostBoWNumMatches = 0;
 
+        // 好奇怪的size
         std::vector<MapPoint*> vpMatchedPoints = std::vector<MapPoint*>(mpCurrentKF->GetMapPointMatches().size(), static_cast<MapPoint*>(NULL));
         std::vector<KeyFrame*> vpKeyFrameMatchedMP = std::vector<KeyFrame*>(mpCurrentKF->GetMapPointMatches().size(), static_cast<KeyFrame*>(NULL));
 
@@ -661,9 +688,11 @@ bool LoopClosing::DetectCommonRegionsFromBoW(std::vector<KeyFrame*> &vpBowCand, 
             if(!vpCovKFi[j] || vpCovKFi[j]->isBad())
                 continue;
 
+            // 使用BoW匹配，获得当前关键帧 与 候选关键帧+其最近的10个关键帧 的MapPoints匹配
             int num = matcherBoW.SearchByBoW(mpCurrentKF, vpCovKFi[j], vvpMatchedMPs[j]);
             if (num > nMostBoWNumMatches)
             {
+                // 记录BoW匹配最多的关键帧
                 nMostBoWNumMatches = num;
                 nIndexMostBoWMatchesKF = j;
             }
@@ -671,24 +700,24 @@ bool LoopClosing::DetectCommonRegionsFromBoW(std::vector<KeyFrame*> &vpBowCand, 
 
         for(int j=0; j<vpCovKFi.size(); ++j)
         {
-            for(int k=0; k < vvpMatchedMPs[j].size(); ++k)
+            for(int k=0; k < vvpMatchedMPs[j].size(); ++k)  // 遍历匹配上的每个Map Point
             {
                 MapPoint* pMPi_j = vvpMatchedMPs[j][k];
                 if(!pMPi_j || pMPi_j->isBad())
                     continue;
 
-                if(spMatchedMPi.find(pMPi_j) == spMatchedMPi.end())
+                if(spMatchedMPi.find(pMPi_j) == spMatchedMPi.end())  // 保存所有匹配上的Map Point到set
                 {
                     spMatchedMPi.insert(pMPi_j);
                     numBoWMatches++;
 
-                    vpMatchedPoints[k]= pMPi_j;
-                    vpKeyFrameMatchedMP[k] = vpCovKFi[j];
+                    vpMatchedPoints[k]= pMPi_j;  // 这里不是有可能覆盖吗？
+                    vpKeyFrameMatchedMP[k] = vpCovKFi[j];  // 
                 }
             }
         }
 
-        //pMostBoWMatchesKF = vpCovKFi[pMostBoWMatchesKF];
+        //pMostBoWMatchesKF = vpCovKFi[pMostBoWMatchesKF];  // 貌似作者本身还想要根据前面计算的情况修改最匹配的关键帧为当前遍历的候选关键帧中的共视关键帧之一
 
         if(numBoWMatches >= nBoWMatches) // TODO pick a good threshold
         {
@@ -707,6 +736,7 @@ bool LoopClosing::DetectCommonRegionsFromBoW(std::vector<KeyFrame*> &vpBowCand, 
             Eigen::Matrix4f mTcm;
             while(!bConverge && !bNoMore)
             {
+                // ***************** 根据初步得到的Map Points匹配求解Sim3 *****************
                 mTcm = solver.iterate(20,bNoMore, vbInliers, nInliers, bConverge);
                 //Verbose::PrintMess("BoW guess: Solver achieve " + to_string(nInliers) + " geometrical inliers among " + to_string(nBoWInliers) + " BoW matches", Verbose::VERBOSITY_DEBUG);
             }
@@ -754,6 +784,7 @@ bool LoopClosing::DetectCommonRegionsFromBoW(std::vector<KeyFrame*> &vpBowCand, 
                 vpMatchedMP.resize(mpCurrentKF->GetMapPointMatches().size(), static_cast<MapPoint*>(NULL));
                 vector<KeyFrame*> vpMatchedKF;
                 vpMatchedKF.resize(mpCurrentKF->GetMapPointMatches().size(), static_cast<KeyFrame*>(NULL));
+                // ***************** 根据求解好的Sim3，再根据投影寻找优化的Map Points匹配 *****************
                 int numProjMatches = matcher.SearchByProjection(mpCurrentKF, mScw, vpMapPoints, vpKeyFrames, vpMatchedMP, vpMatchedKF, 8, 1.5);
                 //cout <<"BoW: " << numProjMatches << " matches between " << vpMapPoints.size() << " points with coarse Sim3" << endl;
 
@@ -766,6 +797,7 @@ bool LoopClosing::DetectCommonRegionsFromBoW(std::vector<KeyFrame*> &vpBowCand, 
                     if(mpTracker->mSensor==System::IMU_MONOCULAR && !mpCurrentKF->GetMap()->GetIniertialBA2())
                         bFixedScale=false;
 
+                    // ***************** 根据投影优化后的Map Points进行约束优化 *****************
                     int numOptMatches = Optimizer::OptimizeSim3(mpCurrentKF, pKFi, vpMatchedMP, gScm, 10, mbFixScale, mHessian7x7, true);
 
                     if(numOptMatches >= nSim3Inliers)
@@ -776,6 +808,7 @@ bool LoopClosing::DetectCommonRegionsFromBoW(std::vector<KeyFrame*> &vpBowCand, 
 
                         vector<MapPoint*> vpMatchedMP;
                         vpMatchedMP.resize(mpCurrentKF->GetMapPointMatches().size(), static_cast<MapPoint*>(NULL));
+                        // ***************** 约束优化后，再进行一次根据投影寻找优化的Map Points匹配 *****************
                         int numProjOptMatches = matcher.SearchByProjection(mpCurrentKF, mScw, vpMapPoints, vpMatchedMP, 5, 1.0);
 
                         if(numProjOptMatches >= nProjOptMatches)
@@ -818,10 +851,11 @@ bool LoopClosing::DetectCommonRegionsFromBoW(std::vector<KeyFrame*> &vpBowCand, 
                             //vpMatchedMPs = vpMatchedMP;
                             //vpMPs = vpMapPoints;
                             // Check the Sim3 transformation with the current KeyFrame covisibles
+                            // ***************** 取当前关键帧最共视的10个关键帧 *****************
                             vector<KeyFrame*> vpCurrentCovKFs = mpCurrentKF->GetBestCovisibilityKeyFrames(nNumCovisibles);
 
                             int j = 0;
-                            while(nNumKFs < 3 && j<vpCurrentCovKFs.size())
+                            while (nNumKFs < 3 && j < vpCurrentCovKFs.size()) // 判定 当前关键帧 最共视的10个关键帧是否和pMostBoWMatchesKF(即当前遍历的候选关键帧)关键帧存在足够多的匹配，提升Place Recognition的Precision
                             {
                                 KeyFrame* pKFj = vpCurrentCovKFs[j];
                                 Sophus::SE3d mTjc = (pKFj->GetPose() * mpCurrentKF->GetPoseInverse()).cast<double>();
@@ -829,6 +863,7 @@ bool LoopClosing::DetectCommonRegionsFromBoW(std::vector<KeyFrame*> &vpBowCand, 
                                 g2o::Sim3 gSjw = gSjc * gScw;
                                 int numProjMatches_j = 0;
                                 vector<MapPoint*> vpMatchedMPs_j;
+                                // ***************** 进行判定 *****************
                                 bool bValid = DetectCommonRegionsFromLastKF(pKFj,pMostBoWMatchesKF, gSjw,numProjMatches_j, vpMapPoints, vpMatchedMPs_j);
 
                                 if(bValid)
@@ -854,6 +889,7 @@ bool LoopClosing::DetectCommonRegionsFromBoW(std::vector<KeyFrame*> &vpBowCand, 
                                 nBestNumCoindicendes = nNumKFs;
                                 pBestMatchedKF = pMostBoWMatchesKF;
                                 g2oBestScw = gScw;
+                                // ***************** 两个关键的结果变量 *****************
                                 vpBestMapPoints = vpMapPoints;
                                 vpBestMatchedMapPoints = vpMatchedMP;
                             }
@@ -868,17 +904,25 @@ bool LoopClosing::DetectCommonRegionsFromBoW(std::vector<KeyFrame*> &vpBowCand, 
         }
         index++;
     }
+    // ***************** 遍历每个候选关键帧 结束 *****************
 
-    if(nBestMatchesReproj > 0)
+    if(nBestMatchesReproj > 0)  // 不使用这个最佳匹配Map Point数量判定依据，只要有匹配就认为成功
     {
         pLastCurrentKF = mpCurrentKF;
         nNumCoincidences = nBestNumCoindicendes;
+        // ***************** 关键的结果变量 *****************
+        // pMatchedKF2：对应Loop closing类中的mpLoopMatchedKF，用于记录当前关键帧的最佳匹配关键帧
         pMatchedKF2 = pBestMatchedKF;
         pMatchedKF2->SetNotErase();
         g2oScw = g2oBestScw;
+        // ***************** 两个关键的结果变量 *****************
+        // vpMapPoints：保存了所有 候选关键帧+其共视帧 的Map Points
+        // vpMatchedMP：保存了当前关键帧的Map Points匹配的Map Points，大小固定，无匹配的元素则为NULL
+        // 按理说所有vpMatchedMP中匹配的Map Points都可以在vpMapPoints中找到
         vpMPs = vpBestMapPoints;
         vpMatchedMPs = vpBestMatchedMapPoints;
 
+        // ***************** 使用nNumCoincidences判定依据，由于选取当前关键帧最共视关键帧的数量(nNumCovisibles)为10，因此这里对应当达到3/10时就认为Place Recognition成功 *****************
         return nNumCoincidences >= 3;
     }
     else
@@ -1214,7 +1258,7 @@ void LoopClosing::CorrectLoop()
     mLastLoopKFid = mpCurrentKF->mnId; //TODO old varible, it is not use in the new algorithm
 }
 
-void LoopClosing::MergeLocal()
+void LoopClosing::MergeLocal()  // 无IMU情况下的子图合并
 {
     int numTemporalKFs = 25; //Temporal KFs in the local window if the map is inertial.
 
@@ -1782,7 +1826,7 @@ void LoopClosing::MergeLocal()
 }
 
 
-void LoopClosing::MergeLocal2()
+void LoopClosing::MergeLocal2()  // IMU情况下的子地图合并
 {
     //cout << "Merge detected!!!!" << endl;
 
