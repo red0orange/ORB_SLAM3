@@ -389,6 +389,7 @@ void KeyFrame::UpdateConnections(bool upParent)
 
     //For all map points in keyframe check in which other keyframes are they seen
     //Increase counter for those keyframes
+    // ***************** 通过遍历所有Map Point的Observation，更新共视图，只要没一个新的关键帧都这样更新，就能够实现共视图的维护 *****************
     for(vector<MapPoint*>::iterator vit=vpMP.begin(), vend=vpMP.end(); vit!=vend; vit++)
     {
         MapPoint* pMP = *vit;
@@ -405,7 +406,7 @@ void KeyFrame::UpdateConnections(bool upParent)
         {
             if(mit->first->mnId==mnId || mit->first->isBad() || mit->first->GetMap() != mpMap)
                 continue;
-            KFcounter[mit->first]++;
+            KFcounter[mit->first]++;  // 更新共视图共视计数
 
         }
     }
@@ -433,20 +434,20 @@ void KeyFrame::UpdateConnections(bool upParent)
             nmax=mit->second;
             pKFmax=mit->first;
         }
-        if(mit->second>=th)
+        if(mit->second>=th)  // 当共视数量大于阈值时，共视图将添加该边
         {
             vPairs.push_back(make_pair(mit->second,mit->first));
-            (mit->first)->AddConnection(this,mit->second);
+            (mit->first)->AddConnection(this,mit->second);  // 更新共视图
         }
     }
 
-    if(vPairs.empty())
+    if(vPairs.empty())  // 如果都没达到共视阈值，就将共视最高的添加到共视图
     {
         vPairs.push_back(make_pair(nmax,pKFmax));
         pKFmax->AddConnection(this,nmax);
     }
 
-    sort(vPairs.begin(),vPairs.end());
+    sort(vPairs.begin(),vPairs.end());  // 排序，从大到小
     list<KeyFrame*> lKFs;
     list<int> lWs;
     for(size_t i=0; i<vPairs.size();i++)
@@ -455,6 +456,7 @@ void KeyFrame::UpdateConnections(bool upParent)
         lWs.push_front(vPairs[i].first);
     }
 
+    // ***************** 更新拓展树（父子），最佳匹配 *****************
     {
         unique_lock<mutex> lockCon(mMutexConnections);
 
@@ -465,7 +467,7 @@ void KeyFrame::UpdateConnections(bool upParent)
 
         if(mbFirstConnection && mnId!=mpMap->GetInitKFid())
         {
-            mpParent = mvpOrderedConnectedKeyFrames.front();
+            mpParent = mvpOrderedConnectedKeyFrames.front();  // 取共视最高的一帧作为父亲
             mpParent->AddChild(this);
             mbFirstConnection = false;
         }

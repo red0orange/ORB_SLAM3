@@ -1460,7 +1460,7 @@ void LoopClosing::MergeLocal()  // 无IMU情况下的子图合并
 
     //std::cout << "[Merge]: Mm = " << to_string(pMergeMap->GetId()) << "; #KFs = " << to_string(spMergeConnectedKFs.size()) << "; #MPs = " << to_string(spMapPointMerge.size()) << std::endl;
 
-    // ***************** 第三步，计算Active Map中所有关键帧到Merge Map的Sim3变换 *****************
+    // ***************** 第三步，计算Active Map中Welding window中关键帧到Merge Map的Sim3变换 *****************
     // 取出Place Recognition中得到的两个关键帧之间的Sim3相似变化
     Sophus::SE3d Twc = mpCurrentKF->GetPoseInverse().cast<double>();
     g2o::Sim3 g2oNonCorrectedSwc(Twc.unit_quaternion(),Twc.translation(),1.0);
@@ -1527,7 +1527,7 @@ void LoopClosing::MergeLocal()  // 无IMU情况下的子图合并
         //TODO DEBUG to know which are the KFs that had been moved to the other map
     }
 
-    // ***************** 第四步，计算Active Map中所有地图点在Merge Map中的坐标值 *****************
+    // ***************** 第四步，计算Active Map中Welding window中地图点在Merge Map中的坐标值 *****************
     int numPointsWithCorrection = 0;
 
     //for(MapPoint* pMPi : spLocalWindowMPs)
@@ -1578,7 +1578,7 @@ void LoopClosing::MergeLocal()  // 无IMU情况下的子图合并
         //std::cout << "Merge local window: " << spLocalWindowKFs.size() << std::endl;
         //std::cout << "[Merge]: init merging maps " << std::endl;
 
-        // 更新Active Map中所有的关键帧
+        // 更新Active Map中Welding window中的关键帧
         for(KeyFrame* pKFi : spLocalWindowKFs)
         {
             if(!pKFi || pKFi->isBad())
@@ -1655,6 +1655,7 @@ void LoopClosing::MergeLocal()  // 无IMU情况下的子图合并
     }
 
     //Update the connections between the local window
+    // ***************** Active Map中的Map Point虽然迁移到Merge Map了，但是没看到添加observation，这样update不应该有效 *****************
     mpMergeMatchedKF->UpdateConnections();
 
     vpMergeConnectedKFs = mpMergeMatchedKF->GetVectorCovisibleKeyFrames();
@@ -1665,11 +1666,13 @@ void LoopClosing::MergeLocal()  // 无IMU情况下的子图合并
     // Project MapPoints observed in the neighborhood of the merge keyframe
     // into the current keyframe and neighbors using corrected poses.
     // Fuse duplications.
-    //std::cout << "[Merge]: start fuse points" << std::endl;
+    // std::cout << "[Merge]: start fuse points" << std::endl;
+    // ***************** 第七步，进行Map Point的融合去重 *****************
     SearchAndFuse(vCorrectedSim3, vpCheckFuseMapPoint);
     //std::cout << "[Merge]: fuse points finished" << std::endl;
 
     // Update connectivity
+    // 在Map Point的Observation更新完成后，共视图的更新就有效了
     for(KeyFrame* pKFi : spLocalWindowKFs)
     {
         if(!pKFi || pKFi->isBad())
@@ -1705,6 +1708,7 @@ void LoopClosing::MergeLocal()  // 无IMU情况下的子图合并
     }
     else
     {
+        // 和Local Map线程中利用Local Map进行Local BA保持一致
         Optimizer::LocalBundleAdjustment(mpCurrentKF, vpLocalCurrentWindowKFs, vpMergeConnectedKFs,&bStop);
     }
 
@@ -1719,7 +1723,9 @@ void LoopClosing::MergeLocal()  // 无IMU情况下的子图合并
     // Loop closed. Release Local Mapping.
     mpLocalMapper->Release();
 
-    //Update the non critical area from the current map to the merged map
+    // ***************** 第八步，将Welding window外的原Active Map的关键帧、Map Point迁移到Merged map *****************
+    // Update the non critical area from the current map to the merged map
+    // 取出原Active Map的所有剩下的关键帧、Map points（Welding window内的都已经迁移过去了）
     vector<KeyFrame*> vpCurrentMapKFs = pCurrentMap->GetAllKeyFrames();
     vector<MapPoint*> vpCurrentMapMPs = pCurrentMap->GetAllMapPoints();
 
@@ -1727,6 +1733,7 @@ void LoopClosing::MergeLocal()  // 无IMU情况下的子图合并
     else {
         if(mpTracker->mSensor == System::MONOCULAR)
         {
+            // ***************** 和Welding window的迁移一致，先计算关键帧、再计算MapPoint，更新它们在Merged Map中的信息 *****************
             unique_lock<mutex> currentLock(pCurrentMap->mMutexMapUpdate); // We update the current map with the Merge information
 
             for(KeyFrame* pKFi : vpCurrentMapKFs)
@@ -1741,12 +1748,12 @@ void LoopClosing::MergeLocal()  // 无IMU情况下的子图合并
                 Sophus::SE3d Tiw = (pKFi->GetPose()).cast<double>();
                 g2o::Sim3 g2oSiw(Tiw.unit_quaternion(),Tiw.translation(),1.0);
                 //Pose without correction
-                vNonCorrectedSim3[pKFi]=g2oSiw;
+                vNonCorrectedSim3[pKFi] = g2oSiw; // 更新vNonCorrectedSim3
 
                 Sophus::SE3d Tic = Tiw*Twc;
                 g2o::Sim3 g2oSim(Tic.unit_quaternion(),Tic.translation(),1.0);
                 g2oCorrectedSiw = g2oSim*mg2oMergeScw;
-                vCorrectedSim3[pKFi]=g2oCorrectedSiw;
+                vCorrectedSim3[pKFi] = g2oCorrectedSiw; // 更新vCorrectedSim3
 
                 // Update keyframe pose with corrected Sim3. First transform Sim3 to SE3 (scale translation)
                 double s = g2oCorrectedSiw.scale();
@@ -1785,6 +1792,7 @@ void LoopClosing::MergeLocal()  // 无IMU情况下的子图合并
             }
         }
 
+        // 再次请求暂停Local Map线程，等待Local Map线程结束
         mpLocalMapper->RequestStop();
         // Wait until Local Mapping has effectively stopped
         while(!mpLocalMapper->isStopped())
@@ -1800,6 +1808,7 @@ void LoopClosing::MergeLocal()  // 无IMU情况下的子图合并
 
 
         {
+            // ***************** 将剩下所有关键帧、Map Point迁移过去，但是不进行Local BA，而是放进去之后等待Global BA慢慢进行更新 *****************
             // Get Merge Map Mutex
             unique_lock<mutex> currentLock(pCurrentMap->mMutexMapUpdate); // We update the current map with the Merge information
             unique_lock<mutex> mergeLock(pMergeMap->mMutexMapUpdate); // We remove the Kfs and MPs in the merged area from the old map
@@ -1856,6 +1865,7 @@ void LoopClosing::MergeLocal()  // 无IMU情况下的子图合并
     pCurrentMap->IncreaseChangeIndex();
     pMergeMap->IncreaseChangeIndex();
 
+    // Atlas删除没有的Map
     mpAtlas->RemoveBadMaps();
 
 }
@@ -2211,7 +2221,7 @@ void LoopClosing::SearchAndFuse(const KeyFrameAndPose &CorrectedPosesMap, vector
         Sophus::Sim3f Scw = Converter::toSophus(g2oScw);
 
         vector<MapPoint*> vpReplacePoints(vpMapPoints.size(),static_cast<MapPoint*>(NULL));
-        int numFused = matcher.Fuse(pKFi,Scw,vpMapPoints,4,vpReplacePoints);
+        int numFused = matcher.Fuse(pKFi,Scw,vpMapPoints,4,vpReplacePoints);  // Fuse中会为Map Point添加Observation
 
         // Get Map Mutex
         unique_lock<mutex> lock(pMap->mMutexMapUpdate);

@@ -1,0 +1,8 @@
+{
+    "files.associations": {
+        "*.cfg": "python",
+        "*.vht": "vhdl",
+        "*.rmd": "markdown",
+        "chrono": "cpp"
+    }
+}
