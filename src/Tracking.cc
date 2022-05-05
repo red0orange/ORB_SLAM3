@@ -1883,7 +1883,11 @@ void Tracking::Track()
     mbCreatedMap = false;
 
     // Get Map Mutex -> Map cannot be changed
+    // ***************** 如果Map在更新(Map Merge或Loop closure等)，Tracking线程会卡在这个锁这里，直到那边完成 *****************
+    std::chrono::steady_clock::time_point time_start = std::chrono::steady_clock::now();
     unique_lock<mutex> lock(pCurrentMap->mMutexMapUpdate);
+    std::chrono::steady_clock::time_point time_end = std::chrono::steady_clock::now();
+    cout << "Tracking Lock Time: " << std::chrono::duration_cast<std::chrono::duration<double, std::milli>>(time_end - time_start).count() << endl;
 
     mbMapUpdated = false;
 

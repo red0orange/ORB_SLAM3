@@ -30,7 +30,8 @@ endif()
 
 LIST(APPEND CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/cmake_modules)
 
-find_package(OpenCV 4.4)
+# find_package(OpenCV 4.4)
+find_package(OpenCV 3.4)
    if(NOT OpenCV_FOUND)
       message(FATAL_ERROR "OpenCV > 4.4 not found.")
    endif()
@@ -53,11 +54,14 @@ ${Pangolin_INCLUDE_DIRS}
 
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/lib)
 
+set(REGISTER_TIMES)
+
 add_library(${PROJECT_NAME} SHARED
 src/System.cc
 src/Tracking.cc
 src/LocalMapping.cc
 src/LoopClosing.cc
+src/CloudMerging.cc
 src/ORBextractor.cc
 src/ORBmatcher.cc
 src/FrameDrawer.cc
@@ -86,6 +90,7 @@ include/System.h
 include/Tracking.h
 include/LocalMapping.h
 include/LoopClosing.h
+include/CloudMerging.h
 include/ORBextractor.h
 include/ORBmatcher.h
 include/FrameDrawer.h

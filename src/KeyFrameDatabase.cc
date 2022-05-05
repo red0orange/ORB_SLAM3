@@ -665,7 +665,7 @@ void KeyFrameDatabase::DetectNBestCandidates(KeyFrame *pKF, vector<KeyFrame*> &v
         }
     }
 
-    if(lScoreAndMatch.empty())
+    if(lScoreAndMatch.empty())  // 没可能吧，至少有一个最大的
         return;
 
     list<pair<float,KeyFrame*> > lAccScoreAndMatch;
@@ -699,7 +699,7 @@ void KeyFrameDatabase::DetectNBestCandidates(KeyFrame *pKF, vector<KeyFrame*> &v
             bestAccScore=accScore;
     }
 
-    lAccScoreAndMatch.sort(compFirst);
+    lAccScoreAndMatch.sort(compFirst);  // 按照accScore总分排序
 
     vpLoopCand.reserve(nNumCandidates);
     vpMergeCand.reserve(nNumCandidates);
